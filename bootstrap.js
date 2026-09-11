@@ -8,15 +8,21 @@ const publicEndpoint = String(process.env.PUBLIC_ENDPOINT || '').trim().replace(
 const localHealth = `http://127.0.0.1:${process.env.PORT || 8080}/health`;
 const runtimeFile = '/app/.runtime-index.js';
 
-// Country is a fact reported by the node. The final client-visible country prefix
-// is owned by Railway, so the node always registers its stable base remark only.
-const source = fs.readFileSync('/app/index.js', 'utf8');
+// The node reports facts only. Railway owns the final client-visible remark/prefix.
+let source = fs.readFileSync('/app/index.js', 'utf8');
 const oldNodeName = "function nodeName() {\n  return `${countryState.code || 'XX'}-${identity.nodeNameBase}`;\n}";
 if (!source.includes(oldNodeName)) throw new Error('nodeName patch target not found');
-fs.writeFileSync(runtimeFile, source.replace(oldNodeName, "function nodeName() {\n  return identity.nodeNameBase;\n}"));
+source = source.replace(oldNodeName, "function nodeName() {\n  return identity.nodeNameBase;\n}");
 
-// Do not let index.js trust PUBLIC_ENDPOINT directly. A real public request must
-// reach this exact container first; that request teaches index.js the endpoint.
+// Pass verified country as telemetry to Railway; do not bake it into the node name.
+const oldPublicProofTail = "      endpoint: baseUrl(publicEndpoint),\n      proof: registryProof\n    });";
+const newPublicProofTail = "      endpoint: baseUrl(publicEndpoint),\n      proof: registryProof,\n      country: countryState.code,\n      country_verified: countryState.verified\n    });";
+if (!source.includes(oldPublicProofTail)) throw new Error('public-proof payload patch target not found');
+source = source.replace(oldPublicProofTail, newPublicProofTail);
+fs.writeFileSync(runtimeFile, source);
+
+// PUBLIC_ENDPOINT coordinates bootstrap only. index.js must learn the endpoint from
+// a real public request that reaches this exact container.
 try { fs.rmSync('/app/.state/public-endpoint.json', { force: true }); } catch {}
 const childEnv = { ...process.env };
 delete childEnv.PUBLIC_ENDPOINT;
@@ -31,7 +37,7 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 async function getJson(url, timeoutMs = 5000) {
   const r = await fetch(url, {
     cache: 'no-store',
-    headers: { 'user-agent': 'justrunmy-bootstrap/1.2.0' },
+    headers: { 'user-agent': 'justrunmy-bootstrap/1.3.0' },
     signal: AbortSignal.timeout(timeoutMs)
   });
   let body = null;
