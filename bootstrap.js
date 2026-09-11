@@ -6,15 +6,22 @@ const { spawn } = require('child_process');
 
 const publicEndpoint = String(process.env.PUBLIC_ENDPOINT || '').trim().replace(/\/+$/, '');
 const localHealth = `http://127.0.0.1:${process.env.PORT || 8080}/health`;
+const runtimeFile = '/app/.runtime-index.js';
 
-// Never let index.js trust a remembered/public endpoint before the platform route
-// is actually reachable. It must learn the endpoint from a real public request.
+// Country is a fact reported by the node. The final client-visible country prefix
+// is owned by Railway, so the node always registers its stable base remark only.
+const source = fs.readFileSync('/app/index.js', 'utf8');
+const oldNodeName = "function nodeName() {\n  return `${countryState.code || 'XX'}-${identity.nodeNameBase}`;\n}";
+if (!source.includes(oldNodeName)) throw new Error('nodeName patch target not found');
+fs.writeFileSync(runtimeFile, source.replace(oldNodeName, "function nodeName() {\n  return identity.nodeNameBase;\n}"));
+
+// Do not let index.js trust PUBLIC_ENDPOINT directly. A real public request must
+// reach this exact container first; that request teaches index.js the endpoint.
 try { fs.rmSync('/app/.state/public-endpoint.json', { force: true }); } catch {}
-
 const childEnv = { ...process.env };
 delete childEnv.PUBLIC_ENDPOINT;
 
-const child = spawn(process.execPath, ['/app/index.js'], {
+const child = spawn(process.execPath, [runtimeFile], {
   stdio: 'inherit',
   env: childEnv
 });
@@ -24,7 +31,7 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 async function getJson(url, timeoutMs = 5000) {
   const r = await fetch(url, {
     cache: 'no-store',
-    headers: { 'user-agent': 'justrunmy-bootstrap/1.1.0' },
+    headers: { 'user-agent': 'justrunmy-bootstrap/1.2.0' },
     signal: AbortSignal.timeout(timeoutMs)
   });
   let body = null;
