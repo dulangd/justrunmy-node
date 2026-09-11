@@ -1,0 +1,15 @@
+{
+  "name": "justrunmy-node",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JustRunMy.App VLESS over WebSocket node with health endpoint and Railway registry integration",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
