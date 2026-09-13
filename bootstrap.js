@@ -3,57 +3,13 @@
 
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { patchRuntime } = require('./runtime-patch');
 
 const publicEndpoint = String(process.env.PUBLIC_ENDPOINT || '').trim().replace(/\/+$/, '');
 const localHealth = `http://127.0.0.1:${process.env.PORT || 8080}/health`;
 const runtimeFile = '/app/.runtime-index.js';
 
-function replaceOnce(source, label, before, after) {
-  const first = source.indexOf(before);
-  if (first < 0) throw new Error(`runtime patch target not found: ${label}`);
-  if (source.indexOf(before, first + before.length) >= 0) throw new Error(`runtime patch target duplicated: ${label}`);
-  return source.slice(0, first) + after + source.slice(first + before.length);
-}
-
-// The node reports facts only. Railway owns the final client-visible remark/prefix.
-let source = fs.readFileSync('/app/index.js', 'utf8');
-const oldNodeName = "function nodeName() {\n  return `${countryState.code || 'XX'}-${identity.nodeNameBase}`;\n}";
-if (!source.includes(oldNodeName)) throw new Error('nodeName patch target not found');
-source = source.replace(oldNodeName, "function nodeName() {\n  return identity.nodeNameBase;\n}");
-
-// Pass verified country as telemetry to Railway; do not bake it into the node name.
-const oldPublicProofTail = "      endpoint: baseUrl(publicEndpoint),\n      proof: registryProof\n    });";
-const newPublicProofTail = "      endpoint: baseUrl(publicEndpoint),\n      proof: registryProof,\n      country: countryState.code,\n      country_verified: countryState.verified\n    });";
-if (!source.includes(oldPublicProofTail)) throw new Error('public-proof payload patch target not found');
-source = source.replace(oldPublicProofTail, newPublicProofTail);
-
-// Public-proof anti-spam: preserve the existing 10-minute refresh semantics, but
-// collapse concurrent startup registration and print only the first successful
-// registry connection. Railway remains responsible for server-side idempotency.
-source = replaceOnce(
-  source,
-  'registration-promise-state',
-  "let registerTimer = null;\nlet registered = false;",
-  "let registerTimer = null;\nlet registerPromise = null;\nlet registered = false;"
-);
-source = replaceOnce(
-  source,
-  'registration-wrapper',
-  "async function registerNode() {\n  if (!publicEndpoint?.host) return false;",
-  "async function registerNode() {\n  if (registerPromise) return registerPromise;\n  registerPromise = registerNodeOnce().finally(() => { registerPromise = null; });\n  return registerPromise;\n}\n\nasync function registerNodeOnce() {\n  if (!publicEndpoint?.host) return false;"
-);
-source = source.replace("    console.log(`[registry] bearer register attempt node_id=${identity.nodeId} name=${nodeName()} url=${REGISTRY_URL}`);\n", '');
-source = source.replace("    console.log(`[registry] public-proof register attempt node_id=${identity.nodeId} name=${nodeName()} url=${REGISTRY_URL}`);\n", '');
-source = replaceOnce(
-  source,
-  'registry-success-log',
-  "  registryLastSuccessAt = new Date().toISOString();\n  console.log(`[registry] registered node_id=${identity.nodeId} name=${nodeName()} mode=${REGISTRY_TOKEN ? 'bearer-token' : 'public-proof'}`);",
-  "  const firstRegistrySuccess = !registryLastSuccessAt;\n  registryLastSuccessAt = new Date().toISOString();\n  if (firstRegistrySuccess) console.log(`[registry] connected node_id=${identity.nodeId} name=${nodeName()} mode=${REGISTRY_TOKEN ? 'bearer-token' : 'public-proof'}`);"
-);
-
-if (!source.includes('let registerPromise = null;') || !source.includes('async function registerNodeOnce()')) {
-  throw new Error('public-proof anti-spam patch validation failed');
-}
+const source = patchRuntime(fs.readFileSync('/app/index.js', 'utf8'));
 fs.writeFileSync(runtimeFile, source);
 
 // PUBLIC_ENDPOINT coordinates bootstrap only. index.js must learn the endpoint from
