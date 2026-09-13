@@ -1,0 +1,22 @@
+name: registry-spam-fix
+
+on:
+  push:
+    branches: [public-proof-spam-fix]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax checks
+        run: |
+          node --check index.js
+          node --check bootstrap.js
+          node --check runtime-patch.js
+      - name: Verify generated runtime and anti-spam semantics
+        run: node test-runtime-patch.js
